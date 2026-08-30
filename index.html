@@ -850,11 +850,24 @@ body{overflow:hidden!important;}
   <p class="subtitle" id="loginSubtitle">تسجيل الدخول لإدارة بيانات المتبرعين والتواصل والتبرعات.</p>
 
   <div id="loginFormArea">
-    <div class="field"><label>اسم المستخدم</label><input id="loginUser" type="text" autocomplete="username"></div>
-    <div class="field"><label>كلمة المرور</label><input id="loginPass" type="password" autocomplete="current-password"></div>
-    <button class="btn-primary" style="width:100%" onclick="login()">دخول</button>
-    <div class="login-links">
-      <a onclick="openForgot()">نسيت كلمة المرور؟</a>
+    <div id="firstTimeSetupArea" class="hidden">
+      <p class="small-note">مرحبًا بك. هذه أول مرة تدخل فيها إلى النظام. قم بإنشاء كلمة المرور الخاصة بك، ولن يراها مدير النظام.</p>
+      <div class="field"><label>اسم المستخدم</label><input id="setupUser" type="text" readonly></div>
+      <div class="grid2">
+        <div class="field"><label>كلمة المرور الجديدة</label><input id="setupPass" type="password" autocomplete="new-password"></div>
+        <div class="field"><label>تأكيد كلمة المرور</label><input id="setupPass2" type="password" autocomplete="new-password"></div>
+      </div>
+      <div class="field"><label>سؤال الأمان</label><input id="setupSecQ" placeholder="مثال: ما اسم مسقط رأسك؟"></div>
+      <div class="field"><label>إجابة سؤال الأمان</label><input id="setupSecA"></div>
+      <button class="btn-primary" style="width:100%" onclick="completeFirstTimeSetup()">حفظ كلمة المرور وتفعيل الحساب</button>
+    </div>
+    <div id="normalLoginArea">
+      <div class="field"><label>اسم المستخدم</label><input id="loginUser" type="text" autocomplete="username"></div>
+      <div class="field"><label>كلمة المرور</label><input id="loginPass" type="password" autocomplete="current-password"></div>
+      <button class="btn-primary" style="width:100%" onclick="login()">دخول</button>
+      <div class="login-links">
+        <a onclick="openForgot()">نسيت كلمة المرور؟</a>
+      </div>
     </div>
     <!-- خيارات المدير (استعادة الحساب، السياسة) مخفية عن المستخدمين العاديين،
          ولا تظهر إلا بعد الضغط على العنوان أعلاه 5 مرات متتالية -->
@@ -1194,6 +1207,19 @@ function safeGet(store,key){try{return store.getItem(key)}catch(e){return Object
 function safeSet(store,key,value){try{store.setItem(key,value)}catch(e){MEMORY_STORAGE[key]=String(value)}}
 function safeRemove(store,key){try{store.removeItem(key)}catch(e){delete MEMORY_STORAGE[key]}}
 function getQueryParam(name){try{return new URLSearchParams(window.location.search).get(name)||''}catch(e){const m=String(window.location.search||'').match(new RegExp('[?&]'+name+'=([^&]*)'));return m?decodeURIComponent(m[1]):''}}
+const PORTAL_MODE=(getQueryParam('portal')||'user').toLowerCase();
+function isAdminPortal(){return PORTAL_MODE==='admin'}
+function activationLinkFor(u){
+  if(!u||!u.username||!u.activationToken)return '';
+  const url=new URL(window.location.href);
+  url.search='';
+  url.searchParams.set('portal','user');
+  url.searchParams.set('activate','1');
+  url.searchParams.set('u',u.username);
+  url.searchParams.set('token',u.activationToken);
+  return url.toString();
+}
+
 function rememberGasFromUrl(){const fromUrl=getQueryParam('gas');if(fromUrl){GAS_URL=fromUrl.trim();safeSet(localStorage,GASKEY,GAS_URL)}}
 
 /* ---------- Google Apps Script code (Code.gs) shown/copyable from the settings page ---------- */
@@ -1672,6 +1698,7 @@ async function manualSync(){
 /* ---------- login screen ---------- */
 let loginTitleClickCount=0, loginTitleClickTimer=null;
 function loginTitleClicked(){
+  if(!isAdminPortal())return;
   loginTitleClickCount++;
   clearTimeout(loginTitleClickTimer);
   loginTitleClickTimer=setTimeout(()=>{loginTitleClickCount=0},1500);
@@ -1683,11 +1710,50 @@ function loginTitleClicked(){
 function showLogin(){
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('app').classList.add('hidden');
+  preparePortalLogin();
+}
+function preparePortalLogin(){
+  const admin=isAdminPortal();
+  const more=document.getElementById('loginMoreOptions');
+  if(more && !admin)more.classList.add('hidden');
+  const title=document.getElementById('loginTitleTrigger');
+  if(title && !admin)title.onclick=null;
+  const activate=getQueryParam('activate')==='1', username=getQueryParam('u'), token=getQueryParam('token');
+  if(activate&&username&&token){
+    const u=USERS.find(x=>x.username===username&&x.activationToken===token&&!x.activated);
+    if(u){
+      document.getElementById('normalLoginArea')?.classList.add('hidden');
+      document.getElementById('firstTimeSetupArea')?.classList.remove('hidden');
+      document.getElementById('setupUser').value=u.username;
+      document.getElementById('loginSubtitle').textContent='قم بإنشاء كلمة المرور الخاصة بك لتفعيل حسابك.';
+      return;
+    }
+  }
+  document.getElementById('normalLoginArea')?.classList.remove('hidden');
+  document.getElementById('firstTimeSetupArea')?.classList.add('hidden');
+}
+async function completeFirstTimeSetup(){
+  const username=getQueryParam('u'), token=getQueryParam('token');
+  const u=USERS.find(x=>x.username===username&&x.activationToken===token&&!x.activated);
+  if(!u){alert('رابط التفعيل غير صالح أو تم استخدامه من قبل.');return}
+  const pass=document.getElementById('setupPass').value, pass2=document.getElementById('setupPass2').value;
+  const q=document.getElementById('setupSecQ').value.trim(), a=document.getElementById('setupSecA').value.trim();
+  if(!pass||pass.length<4){alert('يرجى إدخال كلمة مرور من 4 خانات على الأقل.');return}
+  if(pass!==pass2){alert('كلمة المرور وتأكيدها غير متطابقين.');return}
+  if(!q||!a){alert('يرجى إدخال سؤال الأمان وإجابته.');return}
+  u.password=pass;u.securityQuestion=q;u.securityAnswer=a;u.activated=true;u.activationToken='';
+  await saveUsersReliable();
+  history.replaceState({},document.title,window.location.pathname+'?portal=user');
+  document.getElementById('setupPass').value='';document.getElementById('setupPass2').value='';
+  document.getElementById('setupSecQ').value='';document.getElementById('setupSecA').value='';
+  preparePortalLogin();
+  alert('تم تفعيل حسابك بنجاح. يمكنك الآن تسجيل الدخول.');
 }
 function login(){
   const u=document.getElementById('loginUser').value.trim(), p=document.getElementById('loginPass').value;
   const found=USERS.find(x=>x.username===u&&x.password===p);
   if(!found){alert('اسم المستخدم أو كلمة المرور غير صحيحة.');return}
+  if(found.activated===false){alert('هذا الحساب لم يتم تفعيله بعد. استخدم رابط التفعيل الذي أرسله لك مدير النظام.');return}
   currentUser=found;safeSet(sessionStorage,SESSION,found.id);
   document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';
   showApp()
@@ -1745,7 +1811,7 @@ function managerCategoryOptions(selected){
 function openRegister(forceSuper){
   const isFirst=USERS.length===0;
   const locked=forceSuper||isFirst;
-  if(!locked && !isSuperAdmin(currentUser)){alert('إضافة الحسابات (موظفين أو مديرين) متاحة للمدير الرئيسي للنظام فقط.');return}
+  if(!locked && !isSuperAdmin(currentUser)){alert('إضافة الحسابات متاحة للمدير الرئيسي للنظام فقط.');return}
   openModal(`<h3>${locked?'إنشاء حساب المدير الرئيسي للنظام':'إضافة حساب جديد'}</h3>
   <div class="field"><label>نوع الحساب</label>
    <div class="role-radios">
@@ -1753,94 +1819,61 @@ function openRegister(forceSuper){
     <label><input type="radio" name="r_role" value="manager" ${locked?'disabled':''} onchange="toggleRegisterCategoryField()"> مدير</label>
     <label><input type="radio" name="r_role" value="finance" ${locked?'disabled':''} onchange="toggleRegisterCategoryField()"> الإدارة المالية</label>
    </div>
-   ${locked?'':'<div class="small-note" style="margin-top:6px">حساب "الإدارة المالية" هو الوحيد المخوّل باعتماد حركات التبرع، وتعديلها أو حذفها.</div>'}
-   ${locked?'<div class="small-note" style="margin-top:6px">سيتم إنشاء هذا الحساب بصلاحية "المدير الرئيسي للنظام" — الحساب الوحيد صاحب صلاحية إضافة/حذف الموظفين والمديرين.</div>':''}
   </div>
-  <div class="field hidden" id="r_categoryField"><label>فئة المدير (لقبه الوظيفي)</label><select id="r_category">${managerCategoryOptions('')}</select>
-   <div class="small-note" style="margin-top:4px">يمكن إضافة فئات جديدة (مثل: رئيس، مدير أول...) من صفحة الإعدادات.</div>
-  </div>
-  <div class="field"><label>الاسم الثلاثي</label><input id="r_name" placeholder="مثال: محمد أشرف السيد"></div>
-  <div class="field"><label>رقم الهاتف</label><input id="r_phone" type="tel" placeholder="01xxxxxxxxx"></div>
+  <div class="field hidden" id="r_categoryField"><label>فئة المدير (لقبه الوظيفي)</label><select id="r_category">${managerCategoryOptions('')}</select></div>
+  <div class="field"><label>الاسم الثلاثي</label><input id="r_name"></div>
+  <div class="field"><label>رقم الهاتف</label><input id="r_phone" type="tel"></div>
   <div class="field"><label>اسم المستخدم (لتسجيل الدخول)</label><input id="r_username"></div>
-  <div class="grid2">
+  ${locked?`<div class="grid2">
    <div class="field"><label>كلمة المرور</label><input id="r_pass" type="password"></div>
    <div class="field"><label>تأكيد كلمة المرور</label><input id="r_pass2" type="password"></div>
   </div>
-  <div class="field"><label>سؤال الأمان (يُستخدم لاحقًا عند نسيان كلمة المرور)</label><input id="r_secq" placeholder="مثال: ما اسم مسقط رأسك؟"></div>
-  <div class="field"><label>إجابة سؤال الأمان</label><input id="r_seca"></div>
-  ${locked?'':'<div class="small-note">يقوم مدير النظام بتعيين كلمة المرور وسؤال الأمان لهذا الحساب مباشرة عند الإنشاء.</div>'}
-  <div class="modal-actions"><button class="btn-primary" onclick="submitRegister(${locked?'true':'false'})">${locked?'إنشاء الحساب':'إضافة الحساب'}</button><button class="btn-outline" onclick="closeModal()">إلغاء</button></div>
-  ${locked?`<div class="settings-section" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line)">
-    <h4>الربط بجوجل شيت (حفظ دائم للبيانات، وربط كل الأجهزة بنفس الحسابات)</h4>
-    <p class="small-note">لازم تربط النظام بملف Google Sheets مرة واحدة، وإلا فكل جهاز يفتح فيه أي موظف رابط دخوله الشخصي لن يجد حسابه (لأن بيانات الحسابات محفوظة محليًا فقط على هذا الجهاز)، وسيظهر له هذا الشاشة نفسها بدلًا من حسابه. انشر كود Google Apps Script بالأسفل كتطبيق ويب مرة واحدة، والصق رابطه هنا، بحيث يُحفظ داخل الملف الذي توزّعه — فيرتبط كل من يفتحه تلقائيًا بنفس البيانات.</p>
-    <div id="connBadge" class="conn-badge off">غير مرتبط بجوجل شيت</div>
-    <div class="field" style="margin-top:10px"><label>رابط تطبيق الويب (ينتهي بـ /exec)</label><input id="gasUrlInput" placeholder="https://script.google.com/macros/s/XXXX/exec"></div>
-    <div style="display:flex;gap:9px;flex-wrap:wrap">
-      <button type="button" class="btn-primary btn-small" onclick="saveGasUrl()">حفظ الرابط</button>
-      <button type="button" class="btn-outline btn-small" onclick="testConnection()">اختبار الاتصال</button>
-      <button type="button" class="btn-outline btn-small" onclick="manualSync()">مزامنة الآن</button>
-    </div>
-    <div class="view-section collapsed" style="margin-top:12px">
-      <div class="view-head" onclick="this.parentElement.classList.toggle('collapsed')"><h4>كود Google Apps Script</h4><span class="view-arrow">▼</span></div>
-      <div class="view-body">
-        <p class="small-note">انسخ الكود بالكامل بالضغط على "نسخ الكود"، ثم اتبع الخطوات المكتوبة في أعلى الكود نفسه لإنشاء ملف Google Sheets وربطه بالنظام (تحتاج لتنفيذها مرة واحدة فقط). بعدها الصق الرابط الناتج في الخانة أعلاه واضغط "حفظ الرابط".</p>
-        <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:10px">
-          <button type="button" class="btn-primary btn-small" onclick="copyGasCode()">نسخ الكود</button>
-          <button type="button" class="btn-outline btn-small" onclick="downloadGasCode()">تنزيل كملف Code.gs</button>
-        </div>
-        <pre id="gasCodeBlock" style="direction:ltr;text-align:left;white-space:pre-wrap;background:#F7F5EF;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:12px;max-height:340px;overflow:auto"></pre>
-      </div>
-    </div>
-  </div>`:''}`)
+  <div class="field"><label>سؤال الأمان</label><input id="r_secq"></div>
+  <div class="field"><label>إجابة سؤال الأمان</label><input id="r_seca"></div>`:
+  `<div class="settings-section" style="margin-top:10px">
+     <h4>تفعيل المستخدم بنفسه</h4>
+     <p class="small-note">لن يضع مدير النظام كلمة المرور. بعد حفظ الحساب سيظهر زر «نسخ رابط التفعيل»، وترسل الرابط للمستخدم ليحدد كلمة المرور وسؤال الأمان بنفسه عند أول دخول.</p>
+   </div>`}
+  <div class="modal-actions"><button class="btn-primary" onclick="submitRegister(${locked?'true':'false'})">${locked?'إنشاء الحساب':'إضافة الحساب وإصدار رابط تفعيل'}</button><button class="btn-outline" onclick="closeModal()">إلغاء</button></div>`)
   if(locked){
     const gu=document.getElementById('gasUrlInput'); if(gu)gu.value=GAS_URL||'';
-    setConnStatus(GAS_URL?(lastSyncAt?'on':'connecting'):'off');
-    const codeBlock=document.getElementById('gasCodeBlock'); if(codeBlock)codeBlock.textContent=GAS_CODE;
-  }
+    setConnStatus(GAS_URL?'connecting':'off');
+  } else toggleRegisterCategoryField();
 }
-function toggleRegisterCategoryField(){
-  const roleEl=document.querySelector('input[name="r_role"]:checked');
-  const field=document.getElementById('r_categoryField');
-  if(!field)return;
-  field.classList.toggle('hidden',!roleEl||roleEl.value!=='manager');
-}
-async function submitRegister(locked){
-  const roleEl=document.querySelector('input[name="r_role"]:checked');
-  const role=locked?'superadmin':(roleEl?roleEl.value:'employee');
-  const managerCategory=(!locked&&role==='manager')?(document.getElementById('r_category')?.value||''):'';
-  const name=document.getElementById('r_name').value.trim();
-  const phone=digitsOnly(document.getElementById('r_phone').value);
-  const username=document.getElementById('r_username').value.trim();
-  if(name.split(/\s+/).filter(Boolean).length<3){alert('يرجى إدخال الاسم الثلاثي كاملًا.');return}
-  if(phone.length<10){alert('يرجى إدخال رقم هاتف صحيح.');return}
-  if(!username){alert('يرجى اختيار اسم مستخدم.');return}
-  if(USERS.some(u=>u.username===username)){alert('اسم المستخدم هذا مستخدم بالفعل، يرجى اختيار اسم آخر.');return}
-  const pass=document.getElementById('r_pass').value, pass2=document.getElementById('r_pass2').value;
-  if(!pass||pass.length<4){alert('يرجى إدخال كلمة مرور من 4 خانات على الأقل.');return}
-  if(pass!==pass2){alert('كلمة المرور وتأكيدها غير متطابقين.');return}
-  const secQuestion=document.getElementById('r_secq').value.trim();
-  const secAnswer=document.getElementById('r_seca').value.trim();
-  if(!secQuestion||!secAnswer){alert('يرجى إدخال سؤال الأمان وإجابته — سيُستخدمان لاحقًا عند نسيان كلمة المرور.');return}
-  const payload={id:uid(),fullName:name,phone,username,password:pass,role,managerCategory,active:true,permissions:defaultPermissionsFor({role}),securityQuestion:secQuestion,securityAnswer:secAnswer};
+function submitRegister(locked){
+  const name=document.getElementById('r_name').value.trim(), phone=document.getElementById('r_phone').value.trim(), username=document.getElementById('r_username').value.trim();
+  const roleEl=document.querySelector('input[name="r_role"]:checked'), role=locked?'superadmin':(roleEl?roleEl.value:'employee');
+  const managerCategory=role==='manager'?(document.getElementById('r_category')?.value||''):'';
+  if(!name||!username){alert('يرجى إدخال الاسم واسم المستخدم.');return}
+  if(USERS.some(u=>u.username===username)){alert('اسم المستخدم مستخدم بالفعل.');return}
   if(locked){
-    USERS.push(payload);
-    await saveUsersReliable();
-    currentUser=payload;safeSet(sessionStorage,SESSION,payload.id);
-    closeModal();showApp();
-    alert('تم إنشاء حساب المدير الرئيسي للنظام بنجاح، وتم تسجيل دخولك.')
-  }else{
-    requireSuperAdminConfirm('addAccount',payload,'إضافة حساب "'+name+'" ('+roleLabel(role)+')');
+    const pass=document.getElementById('r_pass').value, pass2=document.getElementById('r_pass2').value;
+    if(!pass||pass.length<4){alert('يرجى إدخال كلمة مرور من 4 خانات على الأقل.');return}
+    if(pass!==pass2){alert('كلمة المرور وتأكيدها غير متطابقين.');return}
+    const secQuestion=document.getElementById('r_secq').value.trim(), secAnswer=document.getElementById('r_seca').value.trim();
+    if(!secQuestion||!secAnswer){alert('يرجى إدخال سؤال الأمان وإجابته.');return}
+    const payload={id:uid(),fullName:name,phone,username,password:pass,role,managerCategory,active:true,permissions:defaultPermissionsFor({role}),securityQuestion:secQuestion,securityAnswer:secAnswer,activated:true};
+    USERS.push(payload); saveUsersReliable().then(()=>{currentUser=payload;safeSet(sessionStorage,SESSION,payload.id);closeModal();showApp();alert('تم إنشاء حساب المدير الرئيسي للنظام بنجاح.')}); return;
   }
+  const payload={id:uid(),fullName:name,phone,username,password:'',role,managerCategory,active:true,permissions:defaultPermissionsFor({role}),securityQuestion:'',securityAnswer:'',activated:false,activationToken:uid()+uid()};
+  requireSuperAdminConfirm('addAccount',payload,'إضافة حساب "'+name+'" ('+roleLabel(role)+')');
 }
 async function executeAddAccount(payload){
   USERS.push(payload);
   await saveUsersReliable();
   closeModal();
-  alert('تم إضافة الحساب بنجاح.\nاسم المستخدم: '+payload.username+'\nكلمة المرور: '+payload.password+'\nيرجى تسليم هذه البيانات لصاحب الحساب — يمكنه تسجيل الدخول بها مباشرة.');
   openManageAccounts();
+  setTimeout(()=>copyActivationLink(payload.id),100);
 }
-
-
+function copyActivationLink(id){
+  if(!isSuperAdmin(currentUser))return;
+  const u=USERS.find(x=>x.id===id); if(!u)return;
+  const link=activationLinkFor(u);
+  if(!link){alert('تعذر إنشاء رابط التفعيل.');return}
+  const done=()=>alert('تم نسخ رابط التفعيل. أرسله للمستخدم ليختار كلمة المرور بنفسه.');
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(link).then(done).catch(()=>prompt('انسخ رابط التفعيل وأرسله للمستخدم:',link))}
+  else prompt('انسخ رابط التفعيل وأرسله للمستخدم:',link);
+}
 /* ---------- forgot password (self-service: username, then answer the security question set by the system admin) ---------- */
 function openForgot(){
   openModal(`<h3>نسيت كلمة المرور</h3>
@@ -2001,7 +2034,7 @@ function renderAccountsList(){
    <div><b>${escapeHtml(u.fullName)}</b> <span class="small-note">(${escapeHtml(userRoleLabel(u))} — ${escapeHtml(u.username)} — ${escapeHtml(u.phone)})${self?' — حسابك الحالي':''}</span>
    <span class="badge ${active?'green':'red'}">${active?'نشط':'غير نشط'}</span></div>
    <div style="display:flex;gap:6px;flex-wrap:wrap">
-    ${canDelete?`<button class="btn-outline btn-small" onclick="resetUserPassword('${u.id}')">إعادة تعيين كلمة المرور</button><button class="btn-outline btn-small" onclick="openUserPermissions('${u.id}')">تعديل الصلاحيات</button>`:''}
+    ${canDelete?`${!u.activated?`<button class="btn-primary btn-small" onclick="copyActivationLink('${u.id}')">نسخ رابط التفعيل</button>`:''}<button class="btn-outline btn-small" onclick="resetUserPassword('${u.id}')">إعادة تعيين كلمة المرور</button><button class="btn-outline btn-small" onclick="openUserPermissions('${u.id}')">تعديل الصلاحيات</button>`:''}
     ${u.role==='employee'?`<button class="btn-outline btn-small" onclick="promoteToManager('${u.id}')">ترقية لمدير</button>`:''}
     ${u.role==='manager'?`<button class="btn-outline btn-small" onclick="editManagerCategory('${u.id}')">تغيير الفئة</button>
     <button class="btn-outline btn-small" onclick="demoteToEmployee('${u.id}')">إرجاع لموظف</button>`:''}
@@ -2903,7 +2936,8 @@ function printAllReportTabs(){
   ['التبرعات حسب قناة التبرع','reportChannelsList'],['التقارير المالية — إجماليات فقط','reportFinancialList']
  ];
  const body=sections.map(([title,id])=>`<section><h3>${escapeHtml(title)}</h3><div>${document.getElementById(id)?.innerHTML||'<div class=\"empty\">لا توجد بيانات ضمن الأبعاد الحالية.</div>'}</div></section>`).join('');
- w.document.write(`<!doctype html><html dir=\"rtl\"><head><meta charset=\"utf-8\"><title>التقرير الشامل</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:26px;color:#222;direction:rtl}h1{font-size:22px;margin:0 0 6px}h2{font-size:14px;color:#666;margin:0 0 18px}h3{font-size:16px;color:#123B38;border-bottom:1px solid #ddd;padding-bottom:7px;margin:22px 0 10px}.card,.project-card,.stat,.manager-box{border:1px solid #ddd;border-radius:10px;padding:12px;margin:8px 0}.name{font-weight:800;font-size:15px}.meta,.small-note,.lbl{color:#666;font-size:12px;margin-top:5px}.num{font-weight:800;font-size:20px}.badge{display:inline-block;border:1px solid #ccc;border-radius:12px;padding:3px 8px;margin-inline-start:5px}.empty{padding:12px;color:#777;border:1px dashed #ddd;border-radius:8px}@media print{section{break-inside:auto}h3{break-after:avoid}}</style></head><body><h1>مؤسسة غيث للتنمية المجتمعية</h1><h2>التقرير الشامل — ${escapeHtml(period)} · الموظف/المدير: ${escapeHtml(reportEmployee==='all'?'كل المستخدمين':(USERS.find(u=>u.id===reportEmployee)?.fullName||'المستخدم المحدد'))} · المكان: ${escapeHtml(reportLocation==='all'?'كل الأماكن':reportLocation)}</h2>${body}</body></html>`);
+ w.document.write(`<!doctype html><html dir=\"rtl\"><head><meta charset=\"utf-8\"><title>التقرير الشامل</title><style>body{font-family:Tahoma,Arial,sans-serif;padding:26px;color:#222;direction:rtl}h1{font-size:22px;margin:0 0 6px}h2{font-size:14px;color:#666;margin:0 0 18px}h3{font-size:16px;color:#123B38;border-bottom:1px solid #ddd;padding-bottom:7px;margin:22px 0 10px}.card,.project-card,.stat,.manager-box{border:1px solid #ddd;border-radius:10px;padding:12px;margin:8px 0}.name{font-weight:800;font-size:15px}.meta,.small-note,.lbl{color:#666;font-size:12px;margin-top:5px}.num{font-weight:800;font-size:20px}.badge{display:inline-block;border:1px solid #ccc;border-radius:12px;padding:3px 8px;margin-inline-start:5px}.empty{padding:12px;color:#777;border:1px dashed #ddd;border-radius:8px}@media print{section{break-inside:auto}h3{break-after:avoid}}</style></head><body><h1>مؤسسة غيث للتنمية المجتمعية</h1><h2>التقرير الشامل — ${escapeHtml(period)} · الموظف/المدير: ${escapeHtml(reportEmployee==='all'?'كل المستخدمين':(USERS.find(u=>u.id===reportEmployee)?.fullName||'المستخدم المحدد'))} · المكان: ${escapeHtml(reportLocation==='all'?'كل الأماكن':reportLocation)}</h2>${body}<script>document.addEventListener('DOMContentLoaded',()=>{preparePortalLogin();});</script>
+</body></html>`);
  w.document.close();w.focus();setTimeout(()=>w.print(),300);
 }
 
